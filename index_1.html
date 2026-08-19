@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Last Man Standing HQ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+
+<!-- Firebase (compat build: no bundler needed) -->
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+
+<style>
+  :root{
+    --pitch-dark: #0c2b1f;
+    --pitch: #123a29;
+    --pitch-light: #1c5c40;
+    --chalk: #f4f2ea;
+    --chalk-dim: #b9c9bf;
+    --amber: #e8a33d;
+    --red: #d9534f;
+    --line: rgba(244,242,234,0.14);
+    --radius: 10px;
+  }
+  *{ box-sizing:border-box; }
+  html,body{
+    margin:0; padding:0;
+    background:
+      radial-gradient(ellipse at top, var(--pitch-light) 0%, var(--pitch) 45%, var(--pitch-dark) 100%);
+    background-attachment: fixed;
+    color: var(--chalk);
+    font-family:'Inter', system-ui, sans-serif;
+    min-height:100vh;
+  }
+  /* faint pitch stripes */
+  body::before{
+    content:"";
+    position:fixed; inset:0;
+    background: repeating-linear-gradient(90deg, rgba(255,255,255,0.02) 0 60px, transparent 60px 120px);
+    pointer-events:none;
+  }
+  h1,h2,h3,.mono-label{ font-family:'Oswald', sans-serif; text-transform:uppercase; letter-spacing:0.04em; }
+  .wrap{ max-width:1100px; margin:0 auto; padding:28px 20px 80px; position:relative; }
+
+  header.top{ display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:14px; border-bottom:2px solid var(--line); padding-bottom:18px; margin-bottom:26px; }
+  header.top h1{ font-size:clamp(28px,4vw,42px); margin:0; font-weight:700; }
+  header.top h1 span{ color:var(--amber); }
+  .sub{ color:var(--chalk-dim); font-size:14px; margin-top:4px; font-family:'JetBrains Mono', monospace; }
+
+  .gw-control{ display:flex; align-items:center; gap:10px; background:rgba(0,0,0,0.25); border:1px solid var(--line); border-radius:999px; padding:6px 6px 6px 16px; }
+  .gw-control label{ font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--chalk-dim); text-transform:uppercase; letter-spacing:0.08em; }
+  .gw-control input{ width:52px; background:transparent; border:none; color:var(--chalk); font-family:'Oswald'; font-size:20px; font-weight:600; }
+  .gw-control button{ background:var(--amber); border:none; color:var(--pitch-dark); font-weight:700; padding:8px 16px; border-radius:999px; cursor:pointer; font-family:'Oswald'; letter-spacing:0.04em; }
+
+  .panel{ background:rgba(9,26,19,0.55); border:1px solid var(--line); border-radius:var(--radius); padding:20px 22px; margin-bottom:22px; backdrop-filter: blur(6px); }
+  .panel h2{ font-size:15px; color:var(--amber); margin:0 0 14px; display:flex; align-items:center; gap:8px; }
+  .panel h2::before{ content:""; width:8px; height:8px; background:var(--amber); border-radius:50%; display:inline-block; }
+
+  details.odds-admin summary{ cursor:pointer; font-family:'JetBrains Mono',monospace; font-size:13px; color:var(--chalk-dim); padding:4px 0; }
+  .fixture-row{ display:grid; grid-template-columns: 1.3fr 1.3fr 70px 70px 70px 32px; gap:8px; align-items:center; margin-bottom:8px; font-size:13px; }
+  select, input[type=number], input[type=text]{
+    background:rgba(255,255,255,0.06); border:1px solid var(--line); color:var(--chalk);
+    border-radius:6px; padding:6px 8px; font-family:'Inter'; font-size:13px;
+  }
+  .fixture-row input[type=number]{ width:100%; text-align:center; }
+  .small-btn{ background:none; border:1px solid var(--line); color:var(--chalk-dim); border-radius:6px; width:30px; height:30px; cursor:pointer; }
+  .small-btn:hover{ border-color:var(--red); color:var(--red); }
+  .add-fixture-btn{ background:transparent; border:1px dashed var(--line); color:var(--chalk-dim); border-radius:6px; padding:8px 14px; cursor:pointer; font-family:'JetBrains Mono',monospace; font-size:12px; margin-top:4px; }
+  .add-fixture-btn:hover{ border-color:var(--amber); color:var(--amber); }
+  .col-headers{ display:grid; grid-template-columns: 1.3fr 1.3fr 70px 70px 70px 32px; gap:8px; font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--chalk-dim); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px; }
+
+  .entries-grid{ display:grid; grid-template-columns: repeat(auto-fit, minmax(300px,1fr)); gap:16px; }
+  .entry-card{ background:rgba(9,26,19,0.6); border:1px solid var(--line); border-radius:var(--radius); padding:16px 18px; }
+  .entry-card.alive{ border-left:3px solid #4caf7d; }
+  .entry-card.eliminated{ border-left:3px solid var(--red); opacity:0.7; }
+  .entry-head{ display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+  .entry-head input{ background:transparent; border:none; font-family:'Oswald'; font-size:17px; font-weight:600; color:var(--chalk); max-width:140px; padding:2px 0; }
+  .pill{ font-family:'JetBrains Mono',monospace; font-size:10px; text-transform:uppercase; letter-spacing:0.06em; padding:3px 9px; border-radius:999px; }
+  .pill.alive{ background:rgba(76,175,125,0.18); color:#7be3ab; }
+  .pill.eliminated{ background:rgba(217,83,79,0.18); color:#ff9d99; }
+
+  table.picks{ width:100%; border-collapse:collapse; font-size:12.5px; margin-bottom:10px; }
+  table.picks td{ padding:5px 3px; border-top:1px solid var(--line); }
+  table.picks td.gw{ color:var(--chalk-dim); width:40px; font-family:'JetBrains Mono',monospace; }
+  table.picks select{ font-size:11px; padding:2px 4px; }
+
+  .rec-box{ background:rgba(232,163,61,0.08); border:1px solid rgba(232,163,61,0.3); border-radius:8px; padding:10px 12px; margin-bottom:12px; }
+  .rec-title{ font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--amber); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px; }
+  .rec-item{ display:flex; justify-content:space-between; font-size:13px; padding:3px 0; }
+  .rec-item .team{ font-weight:500; }
+  .rec-item .prob{ font-family:'JetBrains Mono',monospace; color:var(--amber); }
+  .rec-empty{ color:var(--chalk-dim); font-size:12px; font-style:italic; }
+
+  .pick-row{ display:flex; gap:6px; margin-bottom:10px; }
+  .pick-row select{ flex:1; }
+  .pick-row button{ background:var(--pitch-light); border:1px solid var(--line); color:var(--chalk); padding:6px 12px; border-radius:6px; cursor:pointer; font-family:'Inter'; font-size:12.5px; }
+  .pick-row button:hover{ border-color:var(--amber); }
+
+  .avail-toggle{ font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--chalk-dim); cursor:pointer; }
+  .chip{ display:inline-block; font-size:11px; background:rgba(255,255,255,0.06); padding:2px 8px; border-radius:999px; margin:3px 4px 0 0; }
+
+  .add-entry-btn{ background:none; border:1px solid var(--line); color:var(--chalk-dim); border-radius:8px; padding:8px 16px; cursor:pointer; font-family:'Oswald'; letter-spacing:0.03em; }
+  .add-entry-btn:hover{ border-color:var(--amber); color:var(--amber); }
+
+  .status-line{ font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--chalk-dim); text-align:center; margin-top:30px; }
+  .remove-entry{ background:none; border:none; color:var(--chalk-dim); cursor:pointer; font-size:14px; }
+  .remove-entry:hover{ color:var(--red); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>Last Man <span>Standing</span> HQ</h1>
+      <div class="sub" id="sync-status">connecting…</div>
+    </div>
+    <div class="gw-control">
+      <label>Gameweek</label>
+      <input type="number" id="gw-select" value="1" min="1" />
+    </div>
+  </header>
+
+  <div class="panel">
+    <h2>Odds for this gameweek</h2>
+    <div style="display:flex; gap:10px; align-items:center; margin-bottom:14px;">
+      <button class="add-fixture-btn" style="border-style:solid; color:var(--amber); border-color:var(--amber);" onclick="fetchLiveOdds()">⟳ Fetch live odds</button>
+      <span id="fetch-status" style="font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--chalk-dim);"></span>
+    </div>
+    <details class="odds-admin">
+      <summary>Or enter/edit fixtures &amp; win probabilities manually (visible to everyone who opens this page)</summary>
+      <div style="margin-top:12px;">
+        <div class="col-headers">
+          <span>Home</span><span>Away</span><span>Home %</span><span>Draw %</span><span>Away %</span><span></span>
+        </div>
+        <div id="fixture-rows"></div>
+        <button class="add-fixture-btn" onclick="addFixtureRow()">+ Add fixture</button>
+      </div>
+    </details>
+  </div>
+
+  <div class="panel">
+    <h2>Entries</h2>
+    <div style="margin-bottom:14px;">
+      <button class="add-entry-btn" onclick="addEntry()">+ Add entry</button>
+    </div>
+    <div class="entries-grid" id="entries-grid"></div>
+  </div>
+
+  <div class="status-line">Data syncs live to everyone with this link · No login, so anyone with the URL can edit</div>
+</div>
+
+<script>
+/* ====================== CONFIG ======================
+   Replace this with YOUR OWN Firebase project config.
+   See the README for how to get this (it's free).
+======================================================= */
+const firebaseConfig = {
+  apiKey: "AIzaSyAdzcZuvu1_LZz5JM57pAtK99EPWiVNWQk",
+  authDomain: "last-man-standing-4d4e7.firebaseapp.com",
+  projectId: "last-man-standing-4d4e7",
+  storageBucket: "last-man-standing-4d4e7.firebasestorage.app",
+  messagingSenderId: "601327027420",
+  appId: "1:601327027420:web:2c84c9069f55cbc4fc2019"
+};
+
+// Get a free key at https://the-odds-api.com (500 requests/month free).
+// NOTE: this key is visible in the page source to anyone who views it — fine for a private link, see SETUP.md.
+const ODDS_API_KEY = "YOUR_ODDS_API_KEY";
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+const docRef = db.collection("lms").doc("state");
+
+// Odds API uses full club names; map them to the short names this app uses.
+const TEAM_NAME_MAP = {
+  "Arsenal":"Arsenal", "Aston Villa":"Aston Villa", "AFC Bournemouth":"Bournemouth", "Bournemouth":"Bournemouth",
+  "Brentford":"Brentford", "Brighton and Hove Albion":"Brighton", "Brighton & Hove Albion":"Brighton",
+  "Chelsea":"Chelsea", "Coventry City":"Coventry", "Crystal Palace":"Crystal Palace", "Everton":"Everton",
+  "Fulham":"Fulham", "Hull City":"Hull", "Ipswich Town":"Ipswich", "Leeds United":"Leeds", "Liverpool":"Liverpool",
+  "Manchester City":"Man City", "Manchester United":"Man Utd", "Newcastle United":"Newcastle",
+  "Nottingham Forest":"Nott'm Forest", "Sunderland":"Sunderland", "Tottenham Hotspur":"Spurs"
+};
+
+async function fetchLiveOdds(){
+  const statusEl = document.getElementById('fetch-status');
+  if(!ODDS_API_KEY || ODDS_API_KEY === "YOUR_ODDS_API_KEY"){
+    statusEl.textContent = "Add your Odds API key in index.html first (see SETUP.md)";
+    return;
+  }
+  statusEl.textContent = "fetching…";
+  try{
+    const url = `https://api.the-odds-api.com/v4/sports/soccer_epl/odds/?apiKey=${ODDS_API_KEY}&regions=uk&markets=h2h&oddsFormat=decimal`;
+    const res = await fetch(url);
+    if(!res.ok) throw new Error('API returned ' + res.status);
+    const data = await res.json();
+
+    const fixtures = data.map(match=>{
+      const home = TEAM_NAME_MAP[match.home_team] || match.home_team;
+      const away = TEAM_NAME_MAP[match.away_team] || match.away_team;
+      // use the first bookmaker that has a head-to-head market
+      const book = (match.bookmakers||[]).find(b=>b.markets && b.markets.find(m=>m.key==='h2h'));
+      if(!book) return null;
+      const market = book.markets.find(m=>m.key==='h2h');
+      const outcomes = market.outcomes;
+      const homeOdds = outcomes.find(o=>o.name===match.home_team)?.price;
+      const awayOdds = outcomes.find(o=>o.name===match.away_team)?.price;
+      const drawOdds = outcomes.find(o=>o.name==='Draw')?.price;
+      if(!homeOdds || !awayOdds || !drawOdds) return null;
+      // convert decimal odds to implied %, then normalise away the bookmaker's overround
+      const rawHome = 1/homeOdds, rawDraw = 1/drawOdds, rawAway = 1/awayOdds;
+      const total = rawHome + rawDraw + rawAway;
+      return {
+        home, away,
+        homeProb: Math.round(rawHome/total*100),
+        drawProb: Math.round(rawDraw/total*100),
+        awayProb: Math.round(rawAway/total*100)
+      };
+    }).filter(Boolean);
+
+    if(fixtures.length === 0){
+      statusEl.textContent = "No upcoming EPL odds found right now — try again closer to matchday.";
+      return;
+    }
+    state.odds[state.currentGw] = fixtures;
+    await save();
+    renderFixtures();
+    statusEl.textContent = `Loaded ${fixtures.length} fixtures · ${new Date().toLocaleTimeString()}`;
+  }catch(e){
+    console.error(e);
+    statusEl.textContent = "Fetch failed — check your API key and quota.";
+  }
+}
+
+const TEAMS = ["Arsenal","Aston Villa","Bournemouth","Brentford","Brighton","Chelsea","Coventry","Crystal Palace","Everton","Fulham","Hull","Ipswich","Leeds","Liverpool","Man City","Man Utd","Newcastle","Nott'm Forest","Sunderland","Spurs"];
+
+let state = { entries: [], odds: {}, currentGw: 1 };
+let syncing = false;
+
+// ---------- Firestore live sync ----------
+docRef.onSnapshot((snap)=>{
+  if(snap.exists){
+    state = snap.data();
+    if(!state.entries) state.entries = [];
+    if(!state.odds) state.odds = {};
+    if(!state.currentGw) state.currentGw = 1;
+  } else {
+    // first run: seed default doc
+    state = { entries: defaultEntries(), odds:{}, currentGw:1 };
+    docRef.set(state);
+  }
+  document.getElementById('sync-status').textContent = 'synced live · ' + new Date().toLocaleTimeString();
+  document.getElementById('gw-select').value = state.currentGw;
+  render();
+}, (err)=>{
+  document.getElementById('sync-status').textContent = 'connection error — check your Firebase config';
+  console.error(err);
+});
+
+function defaultEntries(){
+  return Array.from({length:6}, (_,i)=>({id:'e'+i, name:'Entry '+(i+1), eliminated:false, picks:[]}));
+}
+
+async function save(){
+  try{ await docRef.set(state); }catch(e){ console.error('save failed', e); }
+}
+
+// ---------- Gameweek control ----------
+document.getElementById('gw-select').addEventListener('change', (e)=>{
+  state.currentGw = parseInt(e.target.value)||1;
+  save(); render();
+});
+
+// ---------- Odds admin ----------
+function currentFixtures(){
+  const gw = state.currentGw;
+  if(!state.odds[gw]) state.odds[gw] = [];
+  return state.odds[gw];
+}
+
+function addFixtureRow(){
+  currentFixtures().push({home:TEAMS[0], away:TEAMS[1], homeProb:50, drawProb:25, awayProb:25});
+  save(); renderFixtures();
+}
+function updateFixture(idx, field, val){
+  const f = currentFixtures();
+  f[idx][field] = (field.includes('Prob')) ? (parseFloat(val)||0) : val;
+  save();
+}
+function removeFixture(idx){
+  currentFixtures().splice(idx,1);
+  save(); renderFixtures();
+}
+
+function renderFixtures(){
+  const container = document.getElementById('fixture-rows');
+  const fixtures = currentFixtures();
+  container.innerHTML = fixtures.map((f,idx)=>`
+    <div class="fixture-row">
+      <select onchange="updateFixture(${idx},'home',this.value)">${TEAMS.map(t=>`<option ${t===f.home?'selected':''}>${t}</option>`).join('')}</select>
+      <select onchange="updateFixture(${idx},'away',this.value)">${TEAMS.map(t=>`<option ${t===f.away?'selected':''}>${t}</option>`).join('')}</select>
+      <input type="number" min="0" max="100" value="${f.homeProb}" onchange="updateFixture(${idx},'homeProb',this.value)" />
+      <input type="number" min="0" max="100" value="${f.drawProb}" onchange="updateFixture(${idx},'drawProb',this.value)" />
+      <input type="number" min="0" max="100" value="${f.awayProb}" onchange="updateFixture(${idx},'awayProb',this.value)" />
+      <button class="small-btn" onclick="removeFixture(${idx})">✕</button>
+    </div>
+  `).join('') || `<p style="color:var(--chalk-dim);font-size:12px;">No fixtures added for GW${state.currentGw} yet.</p>`;
+}
+
+// build a lookup: team -> win probability, for the current gameweek
+function probLookup(){
+  const map = {};
+  currentFixtures().forEach(f=>{
+    map[f.home] = f.homeProb;
+    map[f.away] = f.awayProb;
+  });
+  return map;
+}
+
+// ---------- Entries ----------
+function usedTeams(entry){ return entry.picks.map(p=>p.team); }
+function availableTeams(entry){ const used = usedTeams(entry); return TEAMS.filter(t=>!used.includes(t)); }
+
+function addEntry(){
+  state.entries.push({id:'e'+Date.now(), name:'Entry '+(state.entries.length+1), eliminated:false, picks:[]});
+  save(); render();
+}
+function removeEntry(id){
+  state.entries = state.entries.filter(e=>e.id!==id);
+  save(); render();
+}
+function renameEntry(id, name){
+  const e = state.entries.find(x=>x.id===id); e.name = name; save();
+}
+function addPick(entryId, team){
+  const e = state.entries.find(x=>x.id===entryId);
+  if(!team) return;
+  e.picks.push({gw: state.currentGw, team, result:'pending'});
+  save(); render();
+}
+function setResult(entryId, idx, result){
+  const e = state.entries.find(x=>x.id===entryId);
+  e.picks[idx].result = result;
+  e.eliminated = e.picks.some(p=>p.result==='loss'||p.result==='draw');
+  save(); render();
+}
+function removePick(entryId, idx){
+  const e = state.entries.find(x=>x.id===entryId);
+  e.picks.splice(idx,1);
+  e.eliminated = e.picks.some(p=>p.result==='loss'||p.result==='draw');
+  save(); render();
+}
+
+function renderEntries(){
+  const grid = document.getElementById('entries-grid');
+  const probs = probLookup();
+
+  grid.innerHTML = state.entries.map(e=>{
+    const avail = availableTeams(e);
+    const recs = avail
+      .filter(t=>probs[t]!==undefined)
+      .map(t=>({team:t, prob:probs[t]}))
+      .sort((a,b)=>b.prob-a.prob)
+      .slice(0,5);
+
+    return `
+    <div class="entry-card ${e.eliminated?'eliminated':'alive'}">
+      <div class="entry-head">
+        <input value="${e.name}" onchange="renameEntry('${e.id}', this.value)" />
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span class="pill ${e.eliminated?'eliminated':'alive'}">${e.eliminated?'Out':'Alive'}</span>
+          <button class="remove-entry" onclick="removeEntry('${e.id}')">✕</button>
+        </div>
+      </div>
+
+      ${e.picks.length ? `
+      <table class="picks"><tbody>
+        ${e.picks.map((p,idx)=>`
+          <tr>
+            <td class="gw">GW${p.gw}</td>
+            <td>${p.team}</td>
+            <td style="text-align:right;">
+              <select onchange="setResult('${e.id}',${idx},this.value)">
+                <option value="pending" ${p.result==='pending'?'selected':''}>Pending</option>
+                <option value="win" ${p.result==='win'?'selected':''}>Win</option>
+                <option value="draw" ${p.result==='draw'?'selected':''}>Draw</option>
+                <option value="loss" ${p.result==='loss'?'selected':''}>Loss</option>
+              </select>
+            </td>
+            <td style="width:20px;"><button class="small-btn" style="width:22px;height:22px;" onclick="removePick('${e.id}',${idx})">✕</button></td>
+          </tr>
+        `).join('')}
+      </tbody></table>` : `<p style="color:var(--chalk-dim);font-size:12.5px;">No picks logged yet.</p>`}
+
+      <div class="rec-box">
+        <div class="rec-title">Suggested picks — GW${state.currentGw}</div>
+        ${recs.length ? recs.map(r=>`
+          <div class="rec-item"><span class="team">${r.team}</span><span class="prob">${r.prob}%</span></div>
+        `).join('') : `<div class="rec-empty">No odds entered yet for GW${state.currentGw} — add fixtures above.</div>`}
+      </div>
+
+      <div class="pick-row">
+        <select id="team-${e.id}">
+          ${avail.map(t=>`<option>${t}</option>`).join('')}
+        </select>
+        <button onclick="logPick('${e.id}')">Log pick</button>
+      </div>
+
+      <details>
+        <summary class="avail-toggle">Available teams (${avail.length})</summary>
+        <div style="margin-top:8px;">${avail.map(t=>`<span class="chip">${t}</span>`).join('')}</div>
+      </details>
+    </div>`;
+  }).join('');
+}
+function logPick(entryId){
+  const sel = document.getElementById('team-'+entryId);
+  addPick(entryId, sel.value);
+}
+
+function render(){
+  renderFixtures();
+  renderEntries();
+}
+</script>
+</body>
+</html>
