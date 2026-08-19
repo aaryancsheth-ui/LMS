@@ -115,9 +115,13 @@
       <h1>Last Man <span>Standing</span> HQ</h1>
       <div class="sub" id="sync-status">connecting…</div>
     </div>
-    <div class="gw-control">
-      <label>Gameweek</label>
-      <input type="number" id="gw-select" value="1" min="1" />
+    <div style="display:flex; flex-direction:column; align-items:flex-end; gap:6px;">
+      <div class="gw-control">
+        <label>Gameweek</label>
+        <input type="number" id="gw-select" value="1" min="1" />
+        <button onclick="advanceGameweek()" title="Move to next gameweek">Next →</button>
+      </div>
+      <div id="advance-hint" style="font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--amber);"></div>
     </div>
   </header>
 
@@ -125,6 +129,7 @@
     <h2>Odds for this gameweek</h2>
     <div style="display:flex; gap:10px; align-items:center; margin-bottom:14px;">
       <button class="add-fixture-btn" style="border-style:solid; color:var(--amber); border-color:var(--amber);" onclick="fetchLiveOdds()">⟳ Fetch live odds</button>
+      <button class="add-fixture-btn" style="border-style:solid; color:#7be3ab; border-color:#7be3ab;" onclick="checkResults()">✓ Check results</button>
       <span id="fetch-status" style="font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--chalk-dim);"></span>
     </div>
     <details class="odds-admin">
@@ -134,8 +139,19 @@
           <span>Home</span><span>Away</span><span>Home %</span><span>Draw %</span><span>Away %</span><span></span>
         </div>
         <div id="fixture-rows"></div>
-        <button class="add-fixture-btn" onclick="addFixtureRow()">+ Add fixture</button>
+        <div style="display:flex; gap:8px;">
+          <button class="add-fixture-btn" onclick="addFixtureRow()">+ Add fixture</button>
+          <button class="add-fixture-btn" onclick="prefillFromSeason()">+ Prefill this week's matchups</button>
+        </div>
       </div>
+    </details>
+  </div>
+
+  <div class="panel">
+    <h2>All fixtures</h2>
+    <details>
+      <summary style="cursor:pointer; font-family:'JetBrains Mono',monospace; font-size:13px; color:var(--chalk-dim);">View every gameweek's fixtures entered or fetched so far</summary>
+      <div id="all-fixtures" style="margin-top:12px;"></div>
     </details>
   </div>
 
@@ -166,7 +182,7 @@ const firebaseConfig = {
 
 // Get a free key at https://the-odds-api.com (500 requests/month free).
 // NOTE: this key is visible in the page source to anyone who views it — fine for a private link, see SETUP.md.
-const ODDS_API_KEY = "YOUR_ODDS_API_KEY";
+const ODDS_API_KEY = "9dea723128977c36770d417e0d10565a";
 
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
@@ -214,7 +230,8 @@ async function fetchLiveOdds(){
         home, away,
         homeProb: Math.round(rawHome/total*100),
         drawProb: Math.round(rawDraw/total*100),
-        awayProb: Math.round(rawAway/total*100)
+        awayProb: Math.round(rawAway/total*100),
+        kickoff: match.commence_time
       };
     }).filter(Boolean);
 
@@ -232,6 +249,97 @@ async function fetchLiveOdds(){
   }
 }
 
+async function checkResults(){
+  const statusEl = document.getElementById('fetch-status');
+  if(!ODDS_API_KEY || ODDS_API_KEY === "YOUR_ODDS_API_KEY"){
+    statusEl.textContent = "Add your Odds API key in index.html first (see SETUP.md)";
+    return;
+  }
+  statusEl.textContent = "checking results…";
+  try{
+    const url = `https://api.the-odds-api.com/v4/sports/soccer_epl/scores/?apiKey=${ODDS_API_KEY}&daysFrom=3`;
+    const res = await fetch(url);
+    if(!res.ok) throw new Error('API returned ' + res.status);
+    const data = await res.json();
+
+    // build a team -> outcome map from completed matches only
+    const outcome = {};
+    data.filter(m=>m.completed && m.scores).forEach(m=>{
+      const home = TEAM_NAME_MAP[m.home_team] || m.home_team;
+      const away = TEAM_NAME_MAP[m.away_team] || m.away_team;
+      const homeScore = parseInt((m.scores.find(s=>s.name===m.home_team)||{}).score);
+      const awayScore = parseInt((m.scores.find(s=>s.name===m.away_team)||{}).score);
+      if(isNaN(homeScore) || isNaN(awayScore)) return;
+      if(homeScore > awayScore){ outcome[home]='win'; outcome[away]='loss'; }
+      else if(homeScore < awayScore){ outcome[home]='loss'; outcome[away]='win'; }
+      else { outcome[home]='draw'; outcome[away]='draw'; }
+    });
+
+    let updates = 0;
+    state.entries.forEach(e=>{
+      e.picks.forEach(p=>{
+        if(p.result === 'pending' && outcome[p.team]){
+          p.result = outcome[p.team];
+          updates++;
+        }
+      });
+      e.eliminated = e.picks.some(p=>p.result==='loss'||p.result==='draw');
+    });
+
+    await save();
+    render();
+    statusEl.textContent = updates>0
+      ? `Updated ${updates} pick(s) from results · ${new Date().toLocaleTimeString()}`
+      : `No completed matches matched a pending pick yet.`;
+  }catch(e){
+    console.error(e);
+    statusEl.textContent = "Results check failed — check your API key and quota.";
+  }
+}
+
+// Full confirmed 2026/27 season fixture list (380 matches), hardcoded so it works with
+// no API and no network dependency. TV/kickoff changes don't affect team pairings.
+const SEASON_FIXTURES = {
+  1: [["Arsenal","Coventry"],["Hull","Man Utd"],["Everton","Crystal Palace"],["Ipswich","Sunderland"],["Nott'm Forest","Leeds"],["Brentford","Spurs"],["Brighton","Aston Villa"],["Man City","Bournemouth"],["Newcastle","Liverpool"],["Fulham","Chelsea"]],
+  2: [["Crystal Palace","Man City"],["Liverpool","Nott'm Forest"],["Bournemouth","Everton"],["Coventry","Hull"],["Spurs","Newcastle"],["Chelsea","Brighton"],["Leeds","Brentford"],["Sunderland","Fulham"],["Man Utd","Ipswich"],["Aston Villa","Arsenal"]],
+  3: [["Ipswich","Liverpool"],["Newcastle","Bournemouth"],["Brentford","Sunderland"],["Brighton","Leeds"],["Fulham","Crystal Palace"],["Man City","Coventry"],["Nott'm Forest","Spurs"],["Hull","Aston Villa"],["Everton","Man Utd"],["Arsenal","Chelsea"]],
+  4: [["Bournemouth","Brentford"],["Aston Villa","Nott'm Forest"],["Chelsea","Hull"],["Crystal Palace","Ipswich"],["Liverpool","Fulham"],["Spurs","Everton"],["Sunderland","Arsenal"],["Coventry","Brighton"],["Man Utd","Man City"],["Leeds","Newcastle"]],
+  5: [["Brentford","Chelsea"],["Spurs","Aston Villa"],["Brighton","Arsenal"],["Everton","Ipswich"],["Leeds","Crystal Palace"],["Man City","Sunderland"],["Newcastle","Hull"],["Nott'm Forest","Coventry"],["Bournemouth","Liverpool"],["Fulham","Man Utd"]],
+  6: [["Arsenal","Leeds"],["Aston Villa","Brentford"],["Chelsea","Bournemouth"],["Ipswich","Fulham"],["Sunderland","Brighton"],["Man Utd","Spurs"],["Crystal Palace","Nott'm Forest"],["Hull","Everton"],["Liverpool","Man City"],["Coventry","Newcastle"]],
+  7: [["Everton","Chelsea"],["Brentford","Liverpool"],["Fulham","Hull"],["Man City","Ipswich"],["Newcastle","Aston Villa"],["Bournemouth","Sunderland"],["Brighton","Crystal Palace"],["Leeds","Man Utd"],["Nott'm Forest","Arsenal"],["Spurs","Coventry"]],
+  8: [["Ipswich","Nott'm Forest"],["Aston Villa","Man City"],["Arsenal","Everton"],["Coventry","Fulham"],["Liverpool","Brighton"],["Chelsea","Spurs"],["Crystal Palace","Newcastle"],["Hull","Brentford"],["Man Utd","Bournemouth"],["Sunderland","Leeds"]],
+  9: [["Chelsea","Man Utd"],["Bournemouth","Leeds"],["Brentford","Nott'm Forest"],["Coventry","Sunderland"],["Hull","Ipswich"],["Man City","Brighton"],["Spurs","Crystal Palace"],["Aston Villa","Fulham"],["Liverpool","Arsenal"],["Newcastle","Everton"]],
+  10:[["Arsenal","Hull"],["Brighton","Brentford"],["Crystal Palace","Liverpool"],["Everton","Coventry"],["Fulham","Newcastle"],["Ipswich","Bournemouth"],["Leeds","Spurs"],["Man Utd","Aston Villa"],["Nott'm Forest","Man City"],["Sunderland","Chelsea"]],
+  11:[["Bournemouth","Nott'm Forest"],["Aston Villa","Sunderland"],["Brentford","Everton"],["Chelsea","Leeds"],["Coventry","Crystal Palace"],["Hull","Brighton"],["Liverpool","Man Utd"],["Man City","Fulham"],["Newcastle","Arsenal"],["Spurs","Ipswich"]],
+  12:[["Arsenal","Man City"],["Brighton","Newcastle"],["Crystal Palace","Hull"],["Everton","Liverpool"],["Fulham","Bournemouth"],["Ipswich","Aston Villa"],["Leeds","Coventry"],["Man Utd","Brentford"],["Nott'm Forest","Chelsea"],["Sunderland","Spurs"]],
+  13:[["Bournemouth","Brighton"],["Aston Villa","Everton"],["Brentford","Arsenal"],["Chelsea","Crystal Palace"],["Coventry","Ipswich"],["Hull","Nott'm Forest"],["Liverpool","Sunderland"],["Man City","Leeds"],["Newcastle","Man Utd"],["Spurs","Fulham"]],
+  14:[["Bournemouth","Hull"],["Aston Villa","Crystal Palace"],["Brentford","Man City"],["Chelsea","Liverpool"],["Everton","Fulham"],["Leeds","Ipswich"],["Man Utd","Coventry"],["Newcastle","Sunderland"],["Nott'm Forest","Brighton"],["Spurs","Arsenal"]],
+  15:[["Arsenal","Bournemouth"],["Brighton","Everton"],["Coventry","Aston Villa"],["Crystal Palace","Man Utd"],["Fulham","Brentford"],["Hull","Spurs"],["Ipswich","Newcastle"],["Liverpool","Leeds"],["Man City","Chelsea"],["Sunderland","Nott'm Forest"]],
+  16:[["Bournemouth","Coventry"],["Arsenal","Man Utd"],["Brentford","Newcastle"],["Brighton","Ipswich"],["Chelsea","Aston Villa"],["Leeds","Fulham"],["Liverpool","Spurs"],["Man City","Hull"],["Nott'm Forest","Everton"],["Sunderland","Crystal Palace"]],
+  17:[["Aston Villa","Leeds"],["Coventry","Chelsea"],["Crystal Palace","Arsenal"],["Everton","Sunderland"],["Fulham","Brighton"],["Hull","Liverpool"],["Ipswich","Brentford"],["Man Utd","Nott'm Forest"],["Newcastle","Man City"],["Spurs","Bournemouth"]],
+  18:[["Aston Villa","Liverpool"],["Coventry","Brentford"],["Crystal Palace","Bournemouth"],["Everton","Man City"],["Fulham","Arsenal"],["Hull","Leeds"],["Ipswich","Chelsea"],["Man Utd","Sunderland"],["Newcastle","Nott'm Forest"],["Spurs","Brighton"]],
+  19:[["Bournemouth","Aston Villa"],["Arsenal","Ipswich"],["Brentford","Crystal Palace"],["Brighton","Man Utd"],["Chelsea","Newcastle"],["Leeds","Everton"],["Liverpool","Coventry"],["Man City","Spurs"],["Nott'm Forest","Fulham"],["Sunderland","Hull"]],
+  20:[["Arsenal","Brentford"],["Brighton","Bournemouth"],["Crystal Palace","Chelsea"],["Everton","Aston Villa"],["Fulham","Spurs"],["Ipswich","Coventry"],["Leeds","Man City"],["Man Utd","Newcastle"],["Nott'm Forest","Hull"],["Sunderland","Liverpool"]],
+  21:[["Bournemouth","Ipswich"],["Aston Villa","Man Utd"],["Brentford","Brighton"],["Chelsea","Sunderland"],["Coventry","Everton"],["Hull","Arsenal"],["Liverpool","Crystal Palace"],["Man City","Nott'm Forest"],["Newcastle","Fulham"],["Spurs","Leeds"]],
+  22:[["Arsenal","Newcastle"],["Brighton","Man City"],["Crystal Palace","Spurs"],["Everton","Brentford"],["Fulham","Aston Villa"],["Ipswich","Hull"],["Leeds","Chelsea"],["Man Utd","Liverpool"],["Nott'm Forest","Bournemouth"],["Sunderland","Coventry"]],
+  23:[["Bournemouth","Fulham"],["Aston Villa","Ipswich"],["Brentford","Man Utd"],["Chelsea","Nott'm Forest"],["Coventry","Leeds"],["Hull","Crystal Palace"],["Liverpool","Everton"],["Man City","Arsenal"],["Newcastle","Brighton"],["Spurs","Sunderland"]],
+  24:[["Arsenal","Liverpool"],["Brighton","Hull"],["Crystal Palace","Coventry"],["Everton","Newcastle"],["Fulham","Man City"],["Ipswich","Spurs"],["Leeds","Bournemouth"],["Man Utd","Chelsea"],["Nott'm Forest","Brentford"],["Sunderland","Aston Villa"]],
+  25:[["Aston Villa","Bournemouth"],["Coventry","Liverpool"],["Crystal Palace","Brentford"],["Everton","Leeds"],["Fulham","Nott'm Forest"],["Hull","Sunderland"],["Ipswich","Arsenal"],["Man Utd","Brighton"],["Newcastle","Chelsea"],["Spurs","Man City"]],
+  26:[["Bournemouth","Crystal Palace"],["Arsenal","Fulham"],["Brentford","Coventry"],["Brighton","Spurs"],["Chelsea","Ipswich"],["Leeds","Aston Villa"],["Liverpool","Hull"],["Man City","Newcastle"],["Nott'm Forest","Man Utd"],["Sunderland","Everton"]],
+  27:[["Aston Villa","Chelsea"],["Coventry","Bournemouth"],["Crystal Palace","Sunderland"],["Everton","Nott'm Forest"],["Fulham","Leeds"],["Hull","Man City"],["Ipswich","Brighton"],["Man Utd","Arsenal"],["Newcastle","Brentford"],["Spurs","Liverpool"]],
+  28:[["Bournemouth","Spurs"],["Arsenal","Crystal Palace"],["Brentford","Ipswich"],["Brighton","Fulham"],["Chelsea","Coventry"],["Leeds","Hull"],["Liverpool","Aston Villa"],["Man City","Everton"],["Nott'm Forest","Newcastle"],["Sunderland","Man Utd"]],
+  29:[["Bournemouth","Newcastle"],["Aston Villa","Hull"],["Chelsea","Arsenal"],["Coventry","Man City"],["Crystal Palace","Fulham"],["Leeds","Brighton"],["Liverpool","Ipswich"],["Man Utd","Everton"],["Sunderland","Brentford"],["Spurs","Nott'm Forest"]],
+  30:[["Arsenal","Sunderland"],["Brentford","Bournemouth"],["Brighton","Coventry"],["Everton","Spurs"],["Fulham","Liverpool"],["Hull","Chelsea"],["Ipswich","Crystal Palace"],["Man City","Man Utd"],["Newcastle","Leeds"],["Nott'm Forest","Aston Villa"]],
+  31:[["Bournemouth","Man City"],["Aston Villa","Brighton"],["Chelsea","Fulham"],["Coventry","Arsenal"],["Crystal Palace","Everton"],["Leeds","Nott'm Forest"],["Liverpool","Newcastle"],["Man Utd","Hull"],["Sunderland","Ipswich"],["Spurs","Brentford"]],
+  32:[["Arsenal","Aston Villa"],["Brentford","Leeds"],["Brighton","Chelsea"],["Everton","Bournemouth"],["Fulham","Sunderland"],["Hull","Coventry"],["Ipswich","Man Utd"],["Man City","Crystal Palace"],["Newcastle","Spurs"],["Nott'm Forest","Liverpool"]],
+  33:[["Bournemouth","Arsenal"],["Aston Villa","Coventry"],["Brentford","Fulham"],["Chelsea","Man City"],["Everton","Brighton"],["Leeds","Liverpool"],["Man Utd","Crystal Palace"],["Newcastle","Ipswich"],["Nott'm Forest","Sunderland"],["Spurs","Hull"]],
+  34:[["Arsenal","Spurs"],["Brighton","Nott'm Forest"],["Coventry","Man Utd"],["Crystal Palace","Aston Villa"],["Fulham","Everton"],["Hull","Bournemouth"],["Ipswich","Leeds"],["Liverpool","Chelsea"],["Man City","Brentford"],["Sunderland","Newcastle"]],
+  35:[["Bournemouth","Man Utd"],["Brentford","Aston Villa"],["Brighton","Sunderland"],["Everton","Hull"],["Fulham","Ipswich"],["Leeds","Arsenal"],["Man City","Liverpool"],["Newcastle","Coventry"],["Nott'm Forest","Crystal Palace"],["Spurs","Chelsea"]],
+  36:[["Arsenal","Nott'm Forest"],["Aston Villa","Newcastle"],["Chelsea","Everton"],["Coventry","Spurs"],["Crystal Palace","Brighton"],["Hull","Fulham"],["Ipswich","Man City"],["Liverpool","Brentford"],["Man Utd","Leeds"],["Sunderland","Bournemouth"]],
+  37:[["Bournemouth","Chelsea"],["Brentford","Hull"],["Brighton","Liverpool"],["Everton","Arsenal"],["Fulham","Coventry"],["Leeds","Sunderland"],["Man City","Aston Villa"],["Newcastle","Crystal Palace"],["Nott'm Forest","Ipswich"],["Spurs","Man Utd"]],
+  38:[["Arsenal","Brighton"],["Aston Villa","Spurs"],["Chelsea","Brentford"],["Coventry","Nott'm Forest"],["Crystal Palace","Leeds"],["Hull","Newcastle"],["Ipswich","Everton"],["Liverpool","Bournemouth"],["Man Utd","Fulham"],["Sunderland","Man City"]]
+};
+
 const TEAMS = ["Arsenal","Aston Villa","Bournemouth","Brentford","Brighton","Chelsea","Coventry","Crystal Palace","Everton","Fulham","Hull","Ipswich","Leeds","Liverpool","Man City","Man Utd","Newcastle","Nott'm Forest","Sunderland","Spurs"];
 
 let state = { entries: [], odds: {}, currentGw: 1 };
@@ -244,6 +352,12 @@ docRef.onSnapshot((snap)=>{
     if(!state.entries) state.entries = [];
     if(!state.odds) state.odds = {};
     if(!state.currentGw) state.currentGw = 1;
+    // one-time migration: rename any untouched "Entry N" placeholders to real names
+    let migrated = false;
+    state.entries.forEach((e,i)=>{
+      if(e.name === 'Entry '+(i+1) && REAL_NAMES[i]){ e.name = REAL_NAMES[i]; migrated = true; }
+    });
+    if(migrated) save();
   } else {
     // first run: seed default doc
     state = { entries: defaultEntries(), odds:{}, currentGw:1 };
@@ -257,8 +371,10 @@ docRef.onSnapshot((snap)=>{
   console.error(err);
 });
 
+const REAL_NAMES = ["Aaryan","D1","Nikhil","Yashvi","Shreya","Anant"];
+
 function defaultEntries(){
-  return Array.from({length:6}, (_,i)=>({id:'e'+i, name:'Entry '+(i+1), eliminated:false, picks:[]}));
+  return REAL_NAMES.map((name,i)=>({id:'e'+i, name, eliminated:false, picks:[]}));
 }
 
 async function save(){
@@ -271,11 +387,38 @@ document.getElementById('gw-select').addEventListener('change', (e)=>{
   save(); render();
 });
 
+function advanceGameweek(){
+  state.currentGw = (state.currentGw||1) + 1;
+  save(); render();
+}
+
+function updateAdvanceHint(){
+  const hintEl = document.getElementById('advance-hint');
+  const fixtures = state.odds[state.currentGw] || [];
+  const withKickoff = fixtures.filter(f=>f.kickoff);
+  if(withKickoff.length === 0){ hintEl.textContent = ''; return; }
+  const latestKickoff = Math.max(...withKickoff.map(f=>new Date(f.kickoff).getTime()));
+  const finishedBy = latestKickoff + (2.5*60*60*1000); // assume ~2.5hrs for a match to finish
+  if(Date.now() > finishedBy){
+    hintEl.textContent = `GW${state.currentGw} matches look finished — check results, then hit "Next →"`;
+  } else {
+    hintEl.textContent = '';
+  }
+}
+
 // ---------- Odds admin ----------
 function currentFixtures(){
   const gw = state.currentGw;
   if(!state.odds[gw]) state.odds[gw] = [];
   return state.odds[gw];
+}
+
+function prefillFromSeason(){
+  const gw = state.currentGw;
+  const skeleton = SEASON_FIXTURES[gw];
+  if(!skeleton) return;
+  state.odds[gw] = skeleton.map(([home,away])=>({home, away, homeProb:50, drawProb:25, awayProb:25}));
+  save(); renderFixtures();
 }
 
 function addFixtureRow(){
@@ -361,7 +504,7 @@ function renderEntries(){
       .filter(t=>probs[t]!==undefined)
       .map(t=>({team:t, prob:probs[t]}))
       .sort((a,b)=>b.prob-a.prob)
-      .slice(0,5);
+      .slice(0,3);
 
     return `
     <div class="entry-card ${e.eliminated?'eliminated':'alive'}">
@@ -393,7 +536,7 @@ function renderEntries(){
       </tbody></table>` : `<p style="color:var(--chalk-dim);font-size:12.5px;">No picks logged yet.</p>`}
 
       <div class="rec-box">
-        <div class="rec-title">Suggested picks — GW${state.currentGw}</div>
+        <div class="rec-title">Top 3 best odds — GW${state.currentGw}</div>
         ${recs.length ? recs.map(r=>`
           <div class="rec-item"><span class="team">${r.team}</span><span class="prob">${r.prob}%</span></div>
         `).join('') : `<div class="rec-empty">No odds entered yet for GW${state.currentGw} — add fixtures above.</div>`}
@@ -418,9 +561,36 @@ function logPick(entryId){
   addPick(entryId, sel.value);
 }
 
+function renderAllFixtures(){
+  const container = document.getElementById('all-fixtures');
+  if(!container) return;
+  const gws = Object.keys(SEASON_FIXTURES).map(Number).sort((a,b)=>a-b);
+  container.innerHTML = gws.map(gw=>{
+    const oddsForGw = state.odds[gw] || [];
+    const oddsMap = {};
+    oddsForGw.forEach(f=>{ oddsMap[f.home+'|'+f.away] = f; });
+    const rows = SEASON_FIXTURES[gw].map(([home,away])=>{
+      const match = oddsMap[home+'|'+away];
+      const probText = match ? `${match.homeProb}% / ${match.drawProb}% / ${match.awayProb}%` : 'odds not yet in';
+      return `
+        <div style="display:flex; justify-content:space-between; font-size:13px; padding:4px 0; border-top:1px solid var(--line);">
+          <span>${home} <span style="color:var(--chalk-dim);">vs</span> ${away}</span>
+          <span style="font-family:'JetBrains Mono',monospace; color:var(--chalk-dim);">${probText}</span>
+        </div>`;
+    }).join('');
+    return `
+      <div style="margin-bottom:16px;">
+        <div style="font-family:'Oswald'; font-size:14px; color:var(--amber); margin-bottom:6px;">Gameweek ${gw}${gw===state.currentGw?' — current':''}</div>
+        ${rows}
+      </div>`;
+  }).join('');
+}
+
 function render(){
   renderFixtures();
   renderEntries();
+  updateAdvanceHint();
+  renderAllFixtures();
 }
 </script>
 </body>
